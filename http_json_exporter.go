@@ -84,7 +84,7 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 
 	intrChan := make(chan StringInterfacePair)
 	go func() {
-		FlatJson(parsed, intrChan)
+		ScanJson(parsed, intrChan)
 	}()
 
 	for pair := range intrChan {
@@ -106,7 +106,7 @@ func NewStringInterfacePair(key string, value float64) StringInterfacePair {
 	}
 }
 
-func FlatJson(value interface{}, ch chan<- StringInterfacePair) {
+func ScanJson(value interface{}, ch chan<- StringInterfacePair) {
 	defer close(ch)
 	scanJson("$", value, ch)
 }

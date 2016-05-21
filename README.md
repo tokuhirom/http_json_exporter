@@ -43,7 +43,7 @@ Exporter returns values like following:
 
 ## The spec of path label
 
-The 'path' label contains JSON path for.
+The 'path' label contains JSON path for the element.
 
 ## LICENSE
 
