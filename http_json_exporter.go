@@ -5,11 +5,10 @@ import (
 	"flag"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/log"
+	"github.com/tokuhirom/json_path_scanner"
 	"io/ioutil"
 	"net"
 	"net/http"
-	"strconv"
-	"strings"
 	"time"
 )
 
@@ -59,84 +58,68 @@ func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
 	e.value.Describe(ch)
 }
 
-func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
+func (e *Exporter) fetch() (*[]byte, error) {
 	resp, err := e.client.Get(e.URL)
 	if err != nil {
-		log.Errorf("Can't scrape Spring Actuator: %v", err)
-		return
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if !(resp.StatusCode >= 200 && resp.StatusCode < 300) {
-		log.Errorf("Can't scrape Spring Actuator: StatusCode: %d", resp.StatusCode)
-		return
+		return nil, err
 	}
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		log.Errorf("Reading response body failed %v", err)
-		return
+		return nil, err
+	}
+
+	return &body, nil
+}
+
+func (e *Exporter) collect(ch chan<- prometheus.Metric) error {
+	body, err := e.fetch()
+	if err != nil {
+		return err
 	}
 
 	var parsed interface{}
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		log.Fatalf("JSON unmarshaling failed: %s", err)
+	if err := json.Unmarshal(*body, &parsed); err != nil {
+		return err
 	}
 
-	intrChan := make(chan StringInterfacePair)
+	intrChan := make(chan json_path_scanner.PathValue)
 	go func() {
-		ScanJson(parsed, intrChan)
+		json_path_scanner.Scan(parsed, intrChan)
 	}()
 
 	for pair := range intrChan {
-		e.value.WithLabelValues(pair.Key).Set(pair.Value)
-		log.Debugf("%s => %s", pair.Key, pair.Value)
+		log.Debugf("%s => %s", pair.Path, pair.Value)
+
+		switch pair.Value.(type) {
+		case int:
+			e.value.WithLabelValues(pair.Path).Set(float64(pair.Value.(int)))
+		case float64:
+			e.value.WithLabelValues(pair.Path).Set(pair.Value.(float64))
+		case string:
+			log.Debugf("Skip. Prometheus can't handle string.")
+		case nil:
+			log.Debugf("Skip. Prometheus can't handle nil.")
+		}
 	}
 	e.value.Collect(ch)
+
+	return nil
 }
 
-type StringInterfacePair struct {
-	Key   string
-	Value float64
-}
-
-func NewStringInterfacePair(key string, value float64) StringInterfacePair {
-	return StringInterfacePair{
-		Key:   key,
-		Value: value,
+func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
+	err := e.collect(ch)
+	if err != nil {
+		log.Warn(err)
+		e.up.Set(0)
+	} else {
+		e.up.Set(1)
 	}
-}
-
-func ScanJson(value interface{}, ch chan<- StringInterfacePair) {
-	defer close(ch)
-	scanJson("$", value, ch)
-}
-
-func scanJson(label string, value interface{}, ch chan<- StringInterfacePair) {
-	switch value.(type) {
-	case int:
-		ch <- NewStringInterfacePair(label, float64(value.(int)))
-	case float64:
-		ch <- NewStringInterfacePair(label, value.(float64))
-	case string:
-		log.Debug("Ignore string value. Prometheus can't store string value(in current version@20160521): %s", label)
-	case nil:
-		log.Debug("Ignore nil value. Prometheus can't store nil value(in current version@20160521): %s", label)
-	case map[string]interface{}:
-		m := value.(map[string]interface{})
-		for k, v := range m {
-			if strings.Contains(k, ".") {
-				scanJson(label+"['"+k+"']", v, ch)
-			} else {
-				scanJson(label+"."+k, v, ch)
-			}
-		}
-	case []interface{}:
-		for i, v := range value.([]interface{}) {
-			scanJson(label+"["+strconv.Itoa(i)+"]", v, ch)
-		}
-	default:
-		panic("Unsupported type in json")
-	}
+	e.up.Collect(ch)
 }
 
 func main() {
