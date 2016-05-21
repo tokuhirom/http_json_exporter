@@ -18,6 +18,7 @@ const (
 
 type Exporter struct {
 	URL    string
+	mutex  sync.RWMutex
 	up     prometheus.Gauge
 	value  *prometheus.GaugeVec
 	client *http.Client
@@ -112,6 +113,9 @@ func (e *Exporter) collect(ch chan<- prometheus.Metric) error {
 }
 
 func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
+	e.mutex.Lock()
+	defer e.mutex.Unlock()
+
 	err := e.collect(ch)
 	if err != nil {
 		log.Warn(err)
