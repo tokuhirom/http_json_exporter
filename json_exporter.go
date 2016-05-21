@@ -55,6 +55,7 @@ func NewExporter(url string, timeout time.Duration) *Exporter {
 
 func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
 	ch <- e.up.Desc()
+	ch <- e.value.Desc()
 }
 
 func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
