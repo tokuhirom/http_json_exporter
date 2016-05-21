@@ -9,11 +9,12 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
 const (
-	namespace = "json"
+	namespace = "http_json"
 )
 
 type Exporter struct {
@@ -55,7 +56,7 @@ func NewExporter(url string, timeout time.Duration) *Exporter {
 
 func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
 	ch <- e.up.Desc()
-	ch <- e.value.Desc()
+	e.value.Describe(ch)
 }
 
 func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
@@ -107,7 +108,7 @@ func NewStringInterfacePair(key string, value float64) StringInterfacePair {
 
 func FlatJson(value interface{}, ch chan<- StringInterfacePair) {
 	defer close(ch)
-	scanJson("", value, ch)
+	scanJson("$", value, ch)
 }
 
 func scanJson(label string, value interface{}, ch chan<- StringInterfacePair) {
@@ -123,19 +124,15 @@ func scanJson(label string, value interface{}, ch chan<- StringInterfacePair) {
 	case map[string]interface{}:
 		m := value.(map[string]interface{})
 		for k, v := range m {
-			if len(label) > 0 {
-				scanJson(label+"."+k, v, ch)
+			if strings.Contains(k, ".") {
+				scanJson(label+"['"+k+"']", v, ch)
 			} else {
-				scanJson(k, v, ch)
+				scanJson(label+"."+k, v, ch)
 			}
 		}
 	case []interface{}:
 		for i, v := range value.([]interface{}) {
-			if len(label) > 0 {
-				scanJson(label+"."+strconv.Itoa(i), v, ch)
-			} else {
-				scanJson(strconv.Itoa(i), v, ch)
-			}
+			scanJson(label+"["+strconv.Itoa(i)+"]", v, ch)
 		}
 	default:
 		panic("Unsupported type in json")
@@ -146,7 +143,7 @@ func main() {
 	var (
 		listenAddress     = flag.String("web.listen-address", ":9101", "Address to listen on for web interface and telemetry.")
 		metricsPath       = flag.String("web.telemetry-path", "/metrics", "Path under which to expose metrics.")
-		actuatorScrapeURI = flag.String("actuator.scrape-uri", "http://localhost/metrics", "URI on which to scrape Spring Actuator.")
+		actuatorScrapeURI = flag.String("actuator.scrape-uri", "http://localhost/metrics", "HTTP JSON API's URL.")
 		timeout           = flag.Duration("actuator.timeout", 5*time.Second, "Timeout for trying to get stats from Spring Actuator.")
 	)
 	flag.Parse()
